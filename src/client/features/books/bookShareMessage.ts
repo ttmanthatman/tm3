@@ -8,13 +8,15 @@ export function parseBookShareMessage(content: string, origin: string): (BookRea
   if (!anchor) return null;
   const location = parseBookReadingUrl(anchor.getAttribute("href") || "", origin)!;
   const linkText = anchor.textContent || "";
-  const commentNode = anchor.nextElementSibling;
-  let comment = "";
-  if (commentNode?.tagName === "P") {
-    for (const br of commentNode.querySelectorAll("br")) br.replaceWith("\n");
-    comment = (commentNode.textContent || "").trim();
-    commentNode.remove();
-  }
+  // Older messages may append plain text or several paragraphs after the link.
+  // Keep all of that outside the book quote, including after message sanitation.
+  const tail = doc.createRange();
+  tail.setStartAfter(anchor);
+  tail.setEnd(doc.body, doc.body.childNodes.length);
+  const comments = tail.extractContents();
+  for (const br of comments.querySelectorAll("br")) br.replaceWith("\n");
+  for (const paragraph of comments.querySelectorAll("p")) paragraph.append("\n");
+  let comment = (comments.textContent || "").trim();
   anchor.remove();
   for (const br of doc.querySelectorAll("br")) br.replaceWith("\n");
   const lines = (doc.body.textContent || "").trim().split("\n");
@@ -24,6 +26,16 @@ export function parseBookShareMessage(content: string, origin: string): (BookRea
   const legacy = current ? null : /^(.*?)\s*(?:·\s*)?\d+%$/.exec(lines[0] || "");
   const chapter = (current?.[1] ?? legacy?.[1] ?? "").replace(/\s*·\s*$/, "").trim();
   if (legacy) lines.shift();
-  const quote = heading[1] === "摘录自" ? lines.join("\n").trim().replace(/^“|”$/g, "") : "";
+  const body = heading[1] === "摘录自" ? lines.join("\n").trim() : "";
+  let quote = body.replace(/^“|”$/g, "");
+  // Legacy links carry the exact source text. Use that explicit boundary rather
+  // than guessing whether a sentence or a quoted passage is the reader's note.
+  if (location.quote && body.startsWith(`“${location.quote}”`)) {
+    const inlineComment = body.slice(location.quote.length + 2).trim();
+    if (inlineComment) {
+      comment = [inlineComment, comment].filter(Boolean).join("\n");
+      quote = location.quote;
+    }
+  }
   return { ...location, title: heading[2], chapter, quote, ...(comment ? { comment } : {}) };
 }

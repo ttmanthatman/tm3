@@ -17,7 +17,7 @@ const href = computed(() => bookReadingUrl(props.context, window.location.origin
         <strong class="reading-share-heading">《{{ context.title }}》</strong>
         <small v-if="!context.quote" class="reading-share-meta">邀请人已读 {{ Math.round(context.fraction * 100) }}%</small>
         <small class="reading-share-meta">位置：{{ bookPositionLabel(context.chapter, context.fraction) }}</small>
-        <blockquote v-if="context.quote" class="reading-share-quote"><Quote :size="16" aria-hidden="true" /> {{ context.quote }} <a class="book-share-inline-link" :href="href" aria-label="跳转到原书位置" title="跳转到原书位置" @click.stop><BookOpen aria-hidden="true" /></a></blockquote>
+        <blockquote v-if="context.quote" class="reading-share-quote"><Quote class="book-share-quote-open" :size="16" aria-hidden="true" /> {{ context.quote }} <Quote class="book-share-quote-close" :size="16" aria-hidden="true" /> <a class="book-share-inline-link" :href="href" aria-label="跳转到原书位置" title="跳转到原书位置" @click.stop><BookOpen aria-hidden="true" /></a></blockquote>
         <a v-else class="book-share-inline-link" :href="href" aria-label="跳转到原书位置" title="跳转到原书位置" @click.stop><BookOpen aria-hidden="true" /></a>
       </div>
     </ReadingShareCard>
@@ -29,6 +29,10 @@ const href = computed(() => bookReadingUrl(props.context, window.location.origin
 .book-share-flow { display: flow-root; }
 .book-share-cover-link { float: left; width: 96px; margin: 0 16px 8px 0; }
 .book-share-flow .reading-share-quote { margin: 8px 0 0; }
+.book-share-card::after { content: ""; position: absolute; top: 0; right: 16px; width: 12px; height: 34px; background: linear-gradient(90deg, #b5462d, #d56b45 48%, #b5462d); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 81%, 0 100%); pointer-events: none; }
+.book-share-flow .reading-share-label, .book-share-flow .reading-share-heading { padding-right: 22px; }
+.book-share-quote-open { transform: rotate(180deg); }
+.book-share-quote-open, .book-share-quote-close { display: inline; vertical-align: -.1em; }
 .book-share-inline-link { display: inline-flex; vertical-align: -.15em; margin-left: .2em; color: #9a4c28; text-decoration: none; }
 .book-share-inline-link svg { width: 1em; height: 1em; }
 .book-share-cover-link:focus-visible, .book-share-inline-link:focus-visible { outline: 2px solid #527bb3; outline-offset: 3px; }

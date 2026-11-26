@@ -14,5 +14,5 @@ const ink = computed<MessageDTO>(() => ({
   <HandwritingMessage v-if="note.handwriting" :message="ink" variant="favorite" interactive :surface-active="active" />
 </template>
 <style scoped>
-.book-note-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; }
+.book-note-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; font-family: var(--reading-comment-font, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif); }
 </style>

@@ -118,6 +118,14 @@ async function responsiveCards(page: Page) {
       if (await card.locator(".reading-share-plant").count()) expect(await card.locator(".reading-share-plant").evaluate(el => (el as HTMLImageElement).complete && (el as HTMLImageElement).naturalWidth > 0)).toBe(true);
     }
     await expect(page.locator("#book .reading-share-plant, #fern .reading-share-plant")).toHaveCount(0);
+    await expect(page.locator("#book .book-share-quote-open, #book .book-share-quote-close")).toHaveCount(2);
+    const ribbon = await page.locator("#book .reading-share-card").evaluate(el => {
+      const style = getComputedStyle(el, "::after");
+      const cover = el.querySelector(".book-share-cover-link")!.getBoundingClientRect();
+      return { content: style.content, left: el.getBoundingClientRect().right - parseFloat(style.right) - parseFloat(style.width), coverRight: cover.right };
+    });
+    expect(ribbon.content).toBe('""');
+    expect(ribbon.left).toBeGreaterThan(ribbon.coverRight);
     const jump = page.locator("#book .book-share-inline-link");
     await expect(jump).toHaveAttribute("href", await page.locator("#book .book-share-cover-link").getAttribute("href") as string);
     expect(await jump.textContent()).toBe("");
@@ -266,6 +274,152 @@ test("Bible share recognition preserves ordinary reference messages and note com
   expect(result.legacy).toBe(""); expect(result.comment).toBe("感言 <script>\n第二行");
 });
 
+test("book share comments stay separate in current and legacy messages", async ({ page }) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const parserPath = "/src/client/features/books/bookShareMessage.ts";
+    const readingPath = "/src/client/features/books/bookReading.ts";
+    const { parseBookShareMessage } = await import(parserPath) as typeof import("../../src/client/features/books/bookShareMessage");
+    const { bookReadingUrl, bookShareContent } = await import(readingPath) as typeof import("../../src/client/features/books/bookReading");
+    const context = { bookId: 2, fraction: .79, title: "魔鬼家书", chapter: "第28封信", quote: "他若现在死了，你就失去他了。\n这是原文第二段。" };
+    const origin = location.origin;
+    const current = bookShareContent(context, origin, '我的感想：\n“仍有盼望。”');
+    const url = bookReadingUrl(context, origin);
+    return {
+      current: parseBookShareMessage(current, origin),
+      plain: parseBookShareMessage(current.replace(/<p>|<\/p>/g, "<br>"), origin),
+      legacy: parseBookShareMessage(`摘录自《魔鬼家书》<br>第28封信 · 79%<br>“${context.quote}”<br><a href="${url}">打开书中位置</a><p>第一段</p><p>第二段</p>`, origin),
+      inline: parseBookShareMessage(`摘录自《魔鬼家书》<br>“${context.quote}”<br>我的感想：“仍有盼望。”<br><a href="${url}">打开书中的位置：第28封信 · 79%</a>`, origin),
+      noComment: parseBookShareMessage(bookShareContent(context, origin), origin),
+      invitation: parseBookShareMessage(bookShareContent({ ...context, quote: "" }, origin, "一起来读"), origin)
+    };
+  });
+  for (const card of [result.current, result.plain, result.legacy, result.inline, result.noComment]) {
+    expect(card?.quote).toBe("他若现在死了，你就失去他了。\n这是原文第二段。");
+  }
+  expect(result.current?.comment).toBe('我的感想：\n“仍有盼望。”');
+  expect(result.plain?.comment).toBe(result.current?.comment);
+  expect(result.legacy?.comment).toBe("第一段\n第二段");
+  expect(result.inline?.comment).toBe('我的感想：“仍有盼望。”');
+  expect(result.noComment?.comment).toBeUndefined();
+  expect(result.invitation?.quote).toBe("");
+  expect(result.invitation?.comment).toBe("一起来读");
+});
+
+async function mountFontSettings(page: Page) {
+  await mountCards(page);
+  await page.evaluate(async () => {
+    const path = "/src/client/features/settings/HandwritingFontSettings.vue";
+    const source = await (await fetch(path)).text();
+    const vuePath = /from ["']([^"']*\/vue\.js[^"']*)["']/.exec(source)?.[1];
+    if (!vuePath) throw new Error("missing Vue runtime");
+    const { createApp, h } = await import(vuePath) as typeof import("vue");
+    const { default: Settings } = await import(path);
+    const host = document.createElement("section");
+    host.id = "font-settings"; host.style.cssText = "max-width:600px;padding:16px";
+    document.body.prepend(host);
+    createApp({ render: () => h(Settings) }).mount(host);
+  });
+  await expect(page.getByLabel("上传手写字体", { exact: true })).toBeEnabled();
+}
+
+test("handwriting font settings keep the fallback on invalid uploads", async ({ page }) => {
+  await mountFontSettings(page);
+  const input = page.getByLabel("上传手写字体", { exact: true });
+  await input.setInputFiles({ name: "invalid.ttf", mimeType: "font/ttf", buffer: Buffer.from("broken font") });
+  await expect(page.locator("#font-settings [role=alert]")).toContainText("无法读取这个字体");
+  await expect(page.locator("#font-settings")).toContainText("未上传");
+  await input.setInputFiles({ name: "empty.ttf", mimeType: "font/ttf", buffer: Buffer.alloc(0) });
+  await expect(page.locator("#font-settings [role=alert]")).toContainText("不能为空");
+  await input.setInputFiles({ name: "script.js", mimeType: "text/javascript", buffer: Buffer.from("alert(1)") });
+  await expect(page.locator("#font-settings [role=alert]")).toContainText("请选择 TTF");
+  for (const width of [360, 390, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.locator("#font-settings").evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+  }
+});
+
+test("appearance settings expose font upload inside the responsive settings panel", async ({ page }) => {
+  await mountCards(page);
+  await page.evaluate(async () => {
+    const path = "/src/client/features/settings/SettingsPanel.vue";
+    const source = await (await fetch(path)).text();
+    const vuePath = /from ["']([^"']*\/vue\.js[^"']*)["']/.exec(source)![1];
+    const { createApp, h, ref, computed } = await import(vuePath) as typeof import("vue");
+    const storeSource = await (await fetch("/src/client/store.ts")).text();
+    const piniaPath = /from ["']([^"']*\/pinia\.js[^"']*)["']/.exec(storeSource)![1];
+    const { createPinia } = await import(piniaPath) as typeof import("pinia");
+    const { default: Settings } = await import(path);
+    const host = document.createElement("div"); document.body.append(host);
+    const open = ref(true);
+    const settings = { settingsTab: ref("appearance"), settingsLoadError: ref(""), themeOptions: computed(() => []), activeTheme: computed(() => ""), themeSwatchStyle: () => ({ background: "" }), avatarText: () => "读", closeSettingsPanel: async () => { open.value = false; } };
+    createApp({ render: () => open.value ? h(Settings, { settings }) : null }).use(createPinia()).mount(host);
+  });
+  for (const width of [360, 390, 1280]) {
+    await page.setViewportSize({ width, height: 702 });
+    const upload = page.getByRole("button", { name: "上传手写字体", exact: true });
+    await upload.scrollIntoViewIfNeeded();
+    await expect(upload).toBeVisible();
+    await expect(page.getByRole("button", { name: "关闭设置", exact: true })).toBeVisible();
+    expect(await page.locator(".settings-modal").evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await page.locator(".settings-modal").screenshot({ path: `output/e2e/font-settings-panel-${width}.png` });
+  }
+  const chooser = page.waitForEvent("filechooser");
+  const upload = page.getByRole("button", { name: "上传手写字体", exact: true });
+  await upload.focus(); await upload.press("Enter");
+  await (await chooser).setFiles({ name: "invalid.ttf", mimeType: "font/ttf", buffer: Buffer.from("broken") });
+  await expect(page.locator(".handwriting-font-settings [role=alert]")).toContainText("无法读取这个字体");
+  await page.getByRole("button", { name: "关闭设置", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "个人设置", exact: true })).toHaveCount(0);
+});
+
+async function fontPersistence(page: Page, path: string) {
+  await mountFontSettings(page);
+  await page.getByLabel("上传手写字体", { exact: true }).setInputFiles(path);
+  await expect(page.locator("#font-settings [role=status]")).toHaveText("手写字体已保存");
+  const assertFont = async () => {
+    const fonts = await page.locator("#book").evaluate(el => [".reading-share-comment", ".reading-share-quote"].map(selector => getComputedStyle(el.querySelector(selector)!).fontFamily));
+    expect(fonts[0]).toContain("ReadingCommentHandwriting");
+    expect(fonts[1]).not.toContain("ReadingCommentHandwriting");
+    expect(await page.evaluate(() => document.fonts.check('20px "ReadingCommentHandwriting"', "读书感想"))).toBe(true);
+  };
+  await assertFont();
+  await page.locator("#font-settings").screenshot({ path: `output/e2e/handwriting-font-${page.context().browser()!.browserType().name()}.png` });
+  await page.reload();
+  await mountFontSettings(page);
+  await assertFont();
+  await page.getByLabel("上传手写字体", { exact: true }).setInputFiles({ name: "broken.ttf", mimeType: "font/ttf", buffer: Buffer.from("broken") });
+  await expect(page.locator("#font-settings [role=alert]")).toContainText("原字体已保留");
+  await assertFont();
+  // A storage failure must also preserve the previously activated font.
+  await page.evaluate(() => {
+    const original = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function() {
+      IDBObjectStore.prototype.put = original;
+      throw new DOMException("test quota failure", "QuotaExceededError");
+    };
+  });
+  await page.getByLabel("上传手写字体", { exact: true }).setInputFiles(path);
+  await expect(page.locator("#font-settings [role=alert]")).toBeVisible();
+  await assertFont();
+  await page.getByRole("button", { name: "恢复默认字体", exact: true }).click();
+  await expect(page.locator("#font-settings [role=status]")).toHaveText("已恢复默认字体");
+  expect(await page.locator("#book .reading-share-comment").evaluate(el => getComputedStyle(el).fontFamily)).not.toContain("ReadingCommentHandwriting");
+  await page.reload();
+  await mountFontSettings(page);
+  await expect(page.locator("#font-settings")).toContainText("未上传");
+  expect(await page.evaluate(() => [...document.fonts].some(font => font.family === "ReadingCommentHandwriting"))).toBe(false);
+}
+
+test("uploaded handwriting font loads, persists and resets in Chromium and WebKit", async ({ page }) => {
+  const path = process.env.E2E_HANDWRITING_FONT;
+  test.skip(!path, "Set E2E_HANDWRITING_FONT to a local font; font files are never bundled.");
+  await fontPersistence(page, path!);
+  const browser = await webkit.launch();
+  try { await fontPersistence(await browser.newPage({ baseURL: "http://127.0.0.1:4173" }), path!); }
+  finally { await browser.close(); }
+});
+
 
 async function passageOptions(page: Page) {
   await mountCards(page);
@@ -363,7 +517,7 @@ test("message cards retain playback before audio availability loads and retry th
     const integrationPath = "/src/client/features/bible/useBibleWorkspaceIntegration.ts";
     const { useBibleWorkspaceIntegration } = await import(integrationPath) as typeof import("../../src/client/features/bible/useBibleWorkspaceIntegration");
     const defaults = Object.fromEntries(Object.keys(Row.props).map(name => [name, () => false]));
-    const message = { id: 801, type: "text", content: '马可福音 1:1<br>“神的儿子，耶稣基督福音的起头。”', payload: null };
+    const message = { id: 801, channelId: 11, type: "text", content: '马可福音 1:1<br>“神的儿子，耶稣基督福音的起头。”', payload: null, sender: { id: 1, kind: "human", username: "reader", displayName: "读者", avatarPath: null }, createdAt: "2026-01-01T00:00:00Z" };
     createApp({ setup() {
       const noop = () => {};
       const integration = useBibleWorkspaceIntegration({ showChannels: ref(false), showMembers: ref(false), channelsCollapsed: ref(true), membersCollapsed: ref(true), sermonWorkspaceOpen: ref(false), bookWorkspaceOpen: ref(false), saveReadPosition: noop, currentChannelId: () => 11, isTapSuppressed: () => false, publishBibleReading: noop, publishBookReading: noop, jumpToMessageInChannel: async () => {} });
