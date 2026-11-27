@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SermonMapDesk from "./SermonMapDesk.vue";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ArrowDown, ArrowUp, CheckCircle2, ChevronLeft, Eraser, FolderOpen, Highlighter, Pencil, Plus, Save, SkipBack, SkipForward, Trash2, Underline, X } from "lucide-vue-next";
 import type { BibleLookupDTO, SermonAnnotationKind, SermonDisplayDTO, SermonPresentationScope, SermonQueueItem, SermonSlideInput, SermonSlideLayoutDTO } from "@shared/types";
@@ -31,6 +32,7 @@ const ownSummary = computed(() => directory.value.find((entry) => entry.presente
 const hasOwnPresentation = computed(() => ownSummary.value !== null);
 
 const view = ref<"queue" | "present">("queue");
+const material = ref<"map" | "text">("map");
 const contentInput = ref("");
 const onePerSlide = ref(false);
 const parsedSlides = ref<SermonSlideInput[]>([]);
@@ -273,6 +275,14 @@ async function inviteMore() {
 function toggleAllInviteCandidates(event: Event) {
   const checked = (event.target as HTMLInputElement).checked;
   selectedMoreInviteIds.value = checked ? inviteCandidateIds.value.slice() : [];
+}
+
+async function projectPoint(map: import("@shared/sermonMap").SermonMap) {
+  const result = await report(sermon.projectMap(map));
+  if (result.ok) {
+    selectedItemId.value = currentItemId.value;
+    actionError.value = formatErrors(result);
+  }
 }
 
 async function report(result: Promise<SermonEmitResult>) {
@@ -625,8 +635,14 @@ function annotateSelection() {
 
     <main v-if="hasOwnPresentation" class="sermon-workspace-body sermon-queue-view" :class="{ 'mobile-hidden': view !== 'queue' }">
       <div class="sermon-queue-column">
-        <section class="sermon-block">
-          <h3>保存讲道方案</h3>
+        <nav class="sermon-materials" aria-label="备讲内容">
+          <button :aria-pressed="material === 'map'" @click="material = 'map'">思维导图</button>
+          <button :aria-pressed="material === 'text'" @click="material = 'text'">经文与文字</button>
+        </nav>
+        <SermonMapDesk :account-id="accountId" v-show="material === 'map'" :live="queue.find(item => item.map)?.map" :busy="sermon.pending.value"
+          @project="projectPoint" @scripture="title => { contentInput = title; material = 'text'; }" />
+        <details class="sermon-block">
+          <summary>保存讲道方案</summary>
           <div class="sermon-plan-save-row">
             <input v-model="planTitle" maxlength="80" placeholder="例如：8月30日分享" @keydown.enter.prevent="saveNewPlan" />
             <button class="primary-btn" type="button" :disabled="planBusyId !== null" @click="saveNewPlan">
@@ -651,10 +667,10 @@ function annotateSelection() {
               </div>
             </article>
           </div>
-        </section>
+        </details>
 
-        <section class="sermon-block">
-          <h3>添加内容</h3>
+        <section v-show="material === 'text'" class="sermon-block">
+          <h3>经文与文字</h3>
           <textarea
             v-model="contentInput"
             class="sermon-reference-input"
@@ -961,6 +977,10 @@ function annotateSelection() {
 </template>
 
 <style scoped>
+.sermon-materials{display:flex;gap:5px;background:#eef1ef;padding:4px;border-radius:10px}
+.sermon-materials button{flex:1;border:0;border-radius:7px;padding:8px;background:transparent;color:#334744;cursor:pointer}
+.sermon-materials button[aria-pressed="true"]{background:white;font-weight:650;box-shadow:0 1px 3px #0002}
+
 .sermon-start-view {
   align-content: center;
 }

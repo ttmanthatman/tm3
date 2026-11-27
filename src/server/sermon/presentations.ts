@@ -1,3 +1,4 @@
+import { createReplayArchive } from "./replays.js";
 import crypto from "node:crypto";
 import type { SermonPlanDTO, SermonPresentationScope, SermonPresentationSummaryDTO, SermonStateDTO } from "../../shared/types.js";
 import { canPresentSermon, type SermonPresenterAccount } from "./permissions.js";
@@ -39,6 +40,7 @@ export type PresentationRecord = {
 export type SermonPresentationServiceDeps = {
   loadSetting(key: string): Promise<string | null>;
   saveSetting(key: string, value: string): Promise<void>;
+  saveSettings?(rows: Array<{ key: string; value: string }>): Promise<void>;
   deleteSetting(key: string): Promise<void>;
   listSettingKeys(prefix: string): Promise<string[]>;
   presenterAccount(accountId: number): Promise<(SermonPresenterAccount & { displayName: string }) | null>;
@@ -73,13 +75,12 @@ export function createSermonPresentationService(deps: SermonPresentationServiceD
   const presentations = new Map<number, PresentationRecord>();
   const seats = new Map<number, number>();
 
+  const archive = createReplayArchive(deps);
+
   function createStore(accountId: number): SermonStateStore {
     const key = sermonSettingKeyFor(accountId);
     return createSermonStateStore({
-      persistence: {
-        load: () => deps.loadSetting(key),
-        save: (value) => deps.saveSetting(key, value)
-      },
+      persistence: archive.persistence(key, accountId, () => [...(presentations.get(accountId)?.invited ?? [])]),
       createId: deps.createId,
       now: deps.now
     });
@@ -141,6 +142,7 @@ export function createSermonPresentationService(deps: SermonPresentationServiceD
   }
 
   const service = {
+    archive,
     /** 发起演示：已存在（如重启恢复）时幂等返回；集会模式用新鲜账号读取复检授权。 */
     async start(actor: SermonPresentationStart, scope: SermonPresentationScope, invitedAccountIds: number[] = []) {
       const existing = presentations.get(actor.accountId);

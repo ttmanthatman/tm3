@@ -4060,6 +4060,9 @@ const sermonService = createSermonPresentationService({
   saveSetting: async (key, value) => {
     await prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
   },
+  saveSettings: async rows => {
+    await prisma.$transaction(rows.map(({ key, value }) => prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } })));
+  },
   deleteSetting: async (key) => {
     await prisma.setting.deleteMany({ where: { key } });
   },

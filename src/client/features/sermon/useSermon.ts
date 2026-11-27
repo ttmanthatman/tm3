@@ -17,6 +17,7 @@ import type {
   SermonStateDTO,
   SermonWatchAccountDTO
 } from "@shared/types";
+import { extractBibleReferenceMatches } from "../../bibleReferences";
 import { api } from "../../api";
 
 export type SermonRequestDecisionEvent = {
@@ -436,6 +437,11 @@ export function useSermon(options: {
     removeViewer,
     end,
     refreshPlans,
+    projectMap: (map: import("@shared/sermonMap").SermonMap) => {
+      const current = map.nodes.find(node => node.id === map.focus);
+      const references = extractBibleReferenceMatches(current?.title ?? "", 8).map(match => match.reference);
+      return emit("sermon:map", { map, references });
+    },
     savePlan,
     loadPlan,
     deletePlan,

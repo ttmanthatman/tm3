@@ -1,3 +1,4 @@
+import JSZip from "jszip";
 import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 import { E2E_ADMIN, E2E_CHANNELS, E2E_MEMBER } from "../seed-data.js";
 
@@ -134,6 +135,7 @@ async function startGroupPresentation(workspace: Locator, inviteDisplayName?: st
 
 /** 队列添加内容、选择最后一条预览，再明确开始演示。 */
 async function addToQueueAndPresent(workspace: Locator, input: string, options?: { onePerSlide?: boolean }) {
+  await workspace.getByRole("button", { name: "经文与文字", exact: true }).click();
   const queueItems = workspace.locator(".sermon-queue-item");
   const initialCount = await queueItems.count();
   await workspace.locator(".sermon-reference-input").fill(input);
@@ -266,11 +268,13 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     await selectAll.uncheck();
 
     // 空队列也可保存为一条独立方案，保存后立即显示“已保存”状态。
+    await workspace.getByText("保存讲道方案", {exact:true}).click();
     await workspace.getByPlaceholder("例如：8月30日分享").fill("空白方案");
     await workspace.getByRole("button", { name: "保存当前队列", exact: true }).click();
     await expect(workspace.locator(".sermon-plan-status.saved")).toContainText("当前队列已保存为“空白方案”");
     await expect(workspace.locator(".sermon-plan-row", { hasText: "空白方案" })).toContainText("0 屏");
 
+    await workspace.getByRole("button", {name:"经文与文字",exact:true}).click();
     await workspace.locator(".sermon-reference-input").fill("约3:16；诗篇23:1");
     // 统一输入框默认整段一屏；勾选「每处经文一屏」让两处出处各自独立成屏。
     await expect(workspace.getByText("自动把内容中的经文分割到队列，每处经文作为一页幻灯片展示。")).toBeVisible();
@@ -649,6 +653,7 @@ test("观众互斥：两场预览并存并可换席", async ({ browser }) => {
     await expect(overlay.locator(".sermon-overlay-badge")).toHaveText(/诗篇\s*23:1/);
 
     // B 先准备内容：创世 1:1 + 马太 6:9（每处一屏），展示创世 1:1。
+    await workspaceB.getByRole("button", {name:"经文与文字",exact:true}).click();
     await workspaceB.locator(".sermon-reference-input").fill("创世记1:1；马太福音6:9");
     await workspaceB.getByRole("checkbox", { name: "每处经文一屏" }).check();
     const addButtonB = workspaceB.getByRole("button", { name: "加入队列", exact: true });
@@ -799,5 +804,45 @@ test("集会授权：申请获批后可发起集会演示，全员可加入", as
     await adminContext.close();
     await member2Context.close();
     await admin2Context.close();
+  }
+});
+
+test("XMind 逐点投影与听众会后回放", async ({ browser }) => {
+  const admin = await browser.newPage({viewport:{width:1280,height:800}});
+  const viewer = await browser.newPage({viewport:{width:390,height:844}});
+  try {
+    await Promise.all([login(admin,E2E_ADMIN), login(viewer,E2E_MEMBER)]);
+    const workspace = await openSermonWorkspace(admin);
+    await startGroupPresentation(workspace,E2E_MEMBER.displayName);
+    const archive = new JSZip();
+    archive.file("content.json", JSON.stringify([{rootTopic:{id:"a",title:"回放测试",children:{
+      attached:[{id:"b",title:"John 3:16 爱"},{id:"c",title:"留待下一步"}]
+    }}}]));
+    await workspace.locator('input[type=file]').setInputFiles({name:"讲章.xmind",mimeType:"application/zip",buffer:await archive.generateAsync({type:"nodebuffer"})});
+    await workspace.getByLabel("待讲要点").selectOption("1");
+    await workspace.getByRole("button",{name:"投出这一点",exact:true}).click();
+    await joinFromLiveNotification(viewer,E2E_ADMIN.displayName);
+    const stage = viewer.locator("section.modal-shell.sermon-overlay");
+    await expect(stage.locator(".map-node")).toHaveCount(2);
+    await expect(stage).not.toContainText("留待下一步");
+    await stage.getByText(/读经 ·/).click();
+    await expect(stage).toContainText("神爱世人");
+    await stage.getByRole("button",{name:"看已讲全图"}).click();
+    await expect(workspace.getByRole("button",{name:"归位，看已讲全图"})).toBeEnabled();
+    await workspace.getByRole("button",{name:"归位，看已讲全图"}).click();
+    await expect(stage.getByRole("button",{name:"回到当前要点"})).toHaveCount(0);
+    await workspace.getByRole("button",{name:"结束演示",exact:true}).click();
+    await expect(stage).toHaveCount(0);
+    await viewer.getByRole("button",{name:"更多功能"}).click();
+    await viewer.getByRole("button",{name:"讲道台",exact:true}).click();
+    const entry = viewer.getByRole("dialog",{name:"选择讲道台"});
+    await entry.getByRole("button",{name:/回放测试/}).first().click();
+    await expect(entry).toContainText("1 / 2");
+    await entry.getByRole("button",{name:"下一步"}).click();
+    await expect(entry).toContainText("2 / 2");
+    await expect(entry.locator(".map-node")).toHaveCount(2);
+  } finally {
+    await cleanupPresentations([admin]);
+    await Promise.all([admin.close(),viewer.close()]);
   }
 });

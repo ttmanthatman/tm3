@@ -71,6 +71,16 @@ export function registerSermonRoutes(app: FastifyInstance, deps: SermonRouteDepe
     return status;
   });
 
+  app.get("/api/sermon/replays", { preHandler: deps.requireAuth }, async request =>
+    deps.service.archive.list((request as SermonAuthedRequest).auth.accountId));
+
+  app.get("/api/sermon/replays/:id/:index", { preHandler: deps.requireAuth }, async (request, reply) => {
+    const params = z.object({ id: z.string().uuid(), index: z.coerce.number().int().nonnegative() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ message: "回放位置无效" });
+    const frame = await deps.service.archive.frame((request as SermonAuthedRequest).auth.accountId, params.data.id, params.data.index);
+    return frame ?? reply.code(404).send({ message: "回放不存在或无权观看" });
+  });
+
   app.get("/api/sermon/directory", { preHandler: deps.requireAuth }, async (request) => {
     const auth = (request as SermonAuthedRequest).auth;
     return deps.service.directory(auth.accountId);

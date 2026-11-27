@@ -1,3 +1,4 @@
+import { sermonMapSchema } from "../../shared/sermonMap.js";
 import { z } from "zod";
 import type { Socket } from "socket.io";
 import type { SermonAnnotation, SermonEndedEvent, SermonInvitedEvent, SermonPresentationPreviewEvent, SermonRemovedEvent, SermonSlideLayoutDTO, SermonStateDTO } from "../../shared/types.js";
@@ -440,6 +441,16 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
     } catch (error) {
       ackFailure(ack, error);
     }
+  });
+
+  socket.on("sermon:map", async (data: unknown, ack?: SermonAck) => {
+    const owned = await ownedPresentation(ack);
+    if (!owned) return;
+    const parsed = z.object({ map: sermonMapSchema, references: z.array(z.string().min(1).max(200)).max(8) }).safeParse(data);
+    if (!parsed.success) { ack?.({ ok: false, message: "导图格式无效" }); return; }
+    const passages = resolveSermonSlide({ blocks: parsed.data.references.map(reference => ({ type: "reference", reference })) }, lookupBibleReference);
+    await commit(ack, owned.accountId, () => owned.record.store.projectMap(owned.actor, parsed.data.map, passages?.resolved.verses),
+      () => ({ errors: fallbackNotice(passages?.fallbacks ?? []) }), true);
   });
 
   socket.on("sermon:add", async (data: unknown, ack?: SermonAck) => {

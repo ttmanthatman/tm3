@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SermonMapStage from "./SermonMapStage.vue";
 import { computed, nextTick, onBeforeUnmount, ref, useSlots, watch } from "vue";
 import type { BibleVerseLineDTO, SermonQueueItem, SermonSlideBlock } from "@shared/types";
 import { resolveSermonSlideLayout } from "@shared/sermonSlideLayout";
@@ -134,8 +135,15 @@ watch(
   </header>
   <div ref="bodyEl" class="sermon-overlay-body">
     <Transition name="sermon-fade" mode="out-in">
+      <SermonMapStage v-if="props.item?.map" :map="props.item.map">
+        <details v-if="props.item.verses.length" :key="props.item.map.focus" class="map-scripture">
+          <summary>读经 · {{ props.item.verses[0].reference }}</summary>
+          <p v-for="(verse,i) in props.item.verses" :key="i">{{ verse.verse }}　{{ verse.text }}</p>
+          <button v-if="enableVerseHold" type="button" @click="emit('verse-hold', props.item.verses[0])">查看上下文</button>
+        </details>
+      </SermonMapStage>
       <div
-        v-if="props.item?.blocks?.length"
+        v-else-if="props.item?.blocks?.length"
         :key="props.item.id"
         class="sermon-passage sermon-passage-blocks"
         :class="{ 'sermon-layout-paragraph': layout.paragraph, 'sermon-layout-centered': layout.centered }"

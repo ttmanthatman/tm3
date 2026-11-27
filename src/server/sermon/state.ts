@@ -1,3 +1,4 @@
+import { sermonMapSchema, type SermonMap } from "../../shared/sermonMap.js";
 import crypto from "node:crypto";
 import { z } from "zod";
 import type {
@@ -424,6 +425,7 @@ const slideBlockSchema = z.discriminatedUnion("type", [
 const queueItemSchema = z
   .object({
     id: z.string().min(1),
+    map: sermonMapSchema.optional(),
     // 旧持久化数据没有 kind 字段，反序列化时按 bible 兼容。
     kind: z.enum(["bible", "text"]).default("bible"),
     reference: z.string(),
@@ -502,7 +504,7 @@ export function deserializeSermonState(raw: string | null | undefined): SermonSt
 
 export type SermonStatePersistence = {
   load(): Promise<string | null>;
-  save(serialized: string): Promise<void>;
+  save(serialized: string, state: SermonStateDTO): Promise<void>;
 };
 
 export function createSermonStateStore(deps: {
@@ -514,10 +516,16 @@ export function createSermonStateStore(deps: {
   const now = deps.now || (() => new Date());
   let state = emptySermonState();
 
-  async function mutate(actor: SermonActor, apply: (current: SermonStateDTO, ctx: SermonMutationContext) => SermonStateDTO) {
-    state = apply(state, { actor, createId, now: now().toISOString() });
-    await deps.persistence.save(serializeSermonState(state));
-    return state;
+  let saved = Promise.resolve();
+  function mutate(actor: SermonActor, apply: (current: SermonStateDTO, ctx: SermonMutationContext) => SermonStateDTO) {
+    const result = saved.then(async () => {
+      const next = apply(state, { actor, createId, now: now().toISOString() });
+      await deps.persistence.save(serializeSermonState(next), next);
+      state = next;
+      return state;
+    });
+    saved = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   return {
@@ -528,6 +536,15 @@ export function createSermonStateStore(deps: {
     getState(): SermonStateDTO {
       return state;
     },
+    projectMap: (actor: SermonActor, map: SermonMap, verses: BibleVerseLineDTO[] = []) => mutate(actor, (current, ctx) => {
+      const previous = current.queue.find(item => item.map);
+      if (!previous && current.queue.length >= SERMON_QUEUE_LIMIT) throw new Error("讲道队列已满");
+      const id = previous?.id ?? createId();
+      const item: SermonQueueItem = { id, map, kind: "text", content: map.title, normalizedReference: map.title,
+        reference: map.title, verses, annotations: [] };
+      const queue = previous ? current.queue.map(entry => entry.id === id ? item : entry) : [...current.queue, item];
+      return touch({ ...current, queue, active: true, currentItemId: id }, ctx);
+    }),
     add: (actor: SermonActor, slides: SermonResolvedSlide[]) => mutate(actor, (current, ctx) => applyAdd(current, slides, ctx)),
     addTexts: (actor: SermonActor, texts: SermonTextInput[]) => mutate(actor, (current, ctx) => applyAddTexts(current, texts, ctx)),
     update: (actor: SermonActor, id: string, slide: SermonResolvedSlide) => mutate(actor, (current, ctx) => applyUpdate(current, id, slide, ctx)),

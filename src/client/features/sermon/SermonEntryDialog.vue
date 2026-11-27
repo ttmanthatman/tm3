@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import SermonReplayPlayer from "./SermonReplayPlayer.vue";
+import { api } from "../../api";
+import type { SermonReplayInfo } from "@shared/types";
 import { MonitorPlay, Presentation, X } from "lucide-vue-next";
 import { useChatStore } from "../../store";
 import { permittedSermonPresentations } from "./sermonWorkspaceState";
@@ -11,25 +14,30 @@ const emit = defineEmits<{ close: []; own: [] }>();
 const store = useChatStore();
 const sermon = useSermon({ getSocket: () => store.socket });
 const error = ref("");
-const directEntering = ref(false);
+const ready = ref(false);
+const replays = ref<SermonReplayInfo[]>([]);
+const selected = ref<SermonReplayInfo | null>(null);
 const accountId = computed(() => store.account?.id ?? null);
 const permittedPresentations = computed(() =>
   permittedSermonPresentations(sermon.directory.value, accountId.value)
 );
 
 watch(
-  [() => props.open, permittedPresentations],
-  async ([open]) => {
-    if (!open) {
-      directEntering.value = false;
-      return;
-    }
+  () => props.open,
+  async (open, _, cleanup) => {
+    ready.value = false;
+    selected.value = null;
+    let current = true;
+    cleanup(() => { current = false; });
+    if (!open) return;
     error.value = "";
-    if (permittedPresentations.value.length === 0 && !directEntering.value) {
-      directEntering.value = true;
-      await enterOwn();
-      if (error.value) directEntering.value = false;
-    }
+    try {
+      const list = await api<SermonReplayInfo[]>("/api/sermon/replays");
+      if (!current) return;
+      replays.value = list;
+      if (permittedPresentations.value.length === 0 && !list.length) await enterOwn();
+    } catch { if (current) error.value = "无法读取回放列表"; }
+    finally { if (current) ready.value = true; }
   },
   { immediate: true }
 );
@@ -72,7 +80,7 @@ async function watchPresentation(presenterId: number) {
 
 <template>
   <section
-    v-if="props.open && (permittedPresentations.length || error)"
+    v-if="props.open && ready"
     class="modal-shell sermon-entry-dialog"
     role="dialog"
     aria-modal="true"
@@ -80,6 +88,8 @@ async function watchPresentation(presenterId: number) {
     @click.self="emit('close')"
   >
     <div class="sermon-entry-sheet">
+      <SermonReplayPlayer v-if="selected" :replay="selected" @close="selected=null" />
+      <template v-else>
       <header>
         <span>
           <strong>选择要进入的讲道台</strong>
@@ -112,6 +122,13 @@ async function watchPresentation(presenterId: number) {
           </span>
         </button>
       </div>
+      <div v-if="replays.length" class="sermon-entry-others">
+        <h3>讲道回放</h3>
+        <button v-for="r in replays" :key="r.id" class="sermon-entry-option" @click="selected=r">
+          <span><strong>{{ r.title }}</strong><small>{{ r.presenter }} · {{ new Date(r.started).toLocaleString() }} · {{ r.count }} 步</small></span>
+        </button>
+      </div>
+      </template>
     </div>
   </section>
 </template>

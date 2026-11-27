@@ -765,6 +765,7 @@ export interface SermonSlideLayoutDTO {
 }
 
 export interface SermonQueueItem {
+  map?: import("./sermonMap.js").SermonMap;
   id: string;
   /** 条目类型：经文或自由文字；旧持久化数据缺省按 bible 迁移 */
   kind: SermonQueueItemKind;
@@ -1252,3 +1253,16 @@ export type EngineActionType =
   | "send_message"
   | "remember_user"
   | "schedule_topic";
+
+export interface SermonReplayInfo {
+  id: string;
+  title: string;
+  presenter: string;
+  started: number;
+  ended: number;
+  count: number;
+}
+
+export interface SermonReplayFrame extends SermonPresentationPreviewDTO {
+  at: number;
+}

@@ -390,3 +390,22 @@ test("start 时恢复已有持久化队列：讲道者重开演示不丢内容",
   assert.equal(record.store.getState().queue.length, 1, "start 先 load 已有状态");
   assert.equal(record.store.getState().scope, "group");
 });
+
+test("replay archives only projected frames, timed in order and restricted to the group's final invitations", async () => {
+  const { service } = createHarness();
+  const actor = { id: "7", name: "用户7" };
+  const { record } = await service.start({ accountId: 7, displayName: actor.name }, "group", [9]);
+  await record.store.addTexts(actor, [{ content: "讲到的" }, { content: "未讲到的" }]);
+  await record.store.present(actor, record.store.getState().queue[0].id);
+  await record.store.display(actor, { fontScale: 1.4 });
+  await service.end(7, false);
+  const [info] = await service.archive.list(9);
+  assert.equal(info.count, 2);
+  assert.deepEqual(await service.archive.list(8), []);
+  assert.equal(await service.archive.frame(8, info.id, 0), null);
+  assert.equal((await service.archive.frame(9, info.id, 1))?.display.fontScale, 1.4);
+  const first = await service.archive.frame(9, info.id, 0);
+  assert.equal(first?.item?.content, "讲到的");
+  assert.equal(first?.at, info.started);
+  assert.equal(await service.archive.frame(7, info.id, 2), null);
+});

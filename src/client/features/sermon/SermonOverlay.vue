@@ -23,7 +23,7 @@ const currentItem = computed<SermonQueueItem | null>(() => {
 
 const display = computed(() => sermonState.value?.display ?? SERMON_DISPLAY_FALLBACK);
 
-watch(() => currentItem.value?.id ?? null, () => {
+watch(() => [currentItem.value?.id, currentItem.value?.map?.focus], () => {
   contextVerses.value = [];
 });
 
