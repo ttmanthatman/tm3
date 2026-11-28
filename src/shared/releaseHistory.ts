@@ -1381,11 +1381,21 @@ const RELEASE_2_16_4_NOTES = [
   "分享感言和读书笔记使用上传的手写字体；未上传时使用中文无衬线字体，与宋体书摘区分。"
 ] as const
 
+const RELEASE_2_16_5_NOTES = [
+  "手写字体改为管理员在“外观与体验 → 聊天室外观”中统一上传，保存到服务器并同步所有成员和设备；个人设置不再提供上传入口。",
+  "书摘与读书笔记卡片改用重新生成的单层纸质背景，仅保留右上角一条丝带；纸边随消息长短延展，移除黄色底层和重复装饰。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.17.0",
+    date: "2026-11-28",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.16.5",
     date: "2026-11-26",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_16_5_NOTES
   },
   {
     version: "2.16.4",
