@@ -437,6 +437,8 @@ export function useSermon(options: {
     removeViewer,
     end,
     refreshPlans,
+    moveMap: (id: string, step: string | undefined, camera: import("@shared/sermonMap").MapCamera) =>
+      emit("sermon:map-camera", { id, step, camera }),
     projectMap: (map: import("@shared/sermonMap").SermonMap) => {
       const current = map.nodes.find(node => node.id === map.focus);
       const references = extractBibleReferenceMatches(current?.title ?? "", 8).map(match => match.reference);

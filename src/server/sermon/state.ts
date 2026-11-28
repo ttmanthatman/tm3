@@ -1,4 +1,4 @@
-import { sermonMapSchema, type SermonMap } from "../../shared/sermonMap.js";
+import { sermonMapSchema, type MapCamera, type SermonMap } from "../../shared/sermonMap.js";
 import crypto from "node:crypto";
 import { z } from "zod";
 import type {
@@ -536,6 +536,11 @@ export function createSermonStateStore(deps: {
     getState(): SermonStateDTO {
       return state;
     },
+    moveMap: (actor: SermonActor, id: string, step: string | undefined, camera: MapCamera) => mutate(actor, (state, ctx) => {
+      const item = state.queue.find(entry => entry.id === id);
+      if (!state.active || state.currentItemId !== id || !item?.map || item.map.step !== step) throw new Error("导图已切换");
+      return touch(replaceQueueItem(state, { ...item, map: { ...item.map, camera } }), ctx);
+    }),
     projectMap: (actor: SermonActor, map: SermonMap, verses: BibleVerseLineDTO[] = []) => mutate(actor, (current, ctx) => {
       const previous = current.queue.find(item => item.map);
       if (!previous && current.queue.length >= SERMON_QUEUE_LIMIT) throw new Error("讲道队列已满");

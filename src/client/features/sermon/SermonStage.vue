@@ -21,6 +21,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
+  "camera": [camera: import("@shared/sermonMap").MapCamera];
   "verse-click": [verseIndex: number, event: MouseEvent];
   "verse-hold": [verse: BibleVerseLineDTO];
 }>();
@@ -135,7 +136,7 @@ watch(
   </header>
   <div ref="bodyEl" class="sermon-overlay-body">
     <Transition name="sermon-fade" mode="out-in">
-      <SermonMapStage v-if="props.item?.map" :map="props.item.map">
+      <SermonMapStage v-if="props.item?.map" :map="props.item.map" @camera="emit('camera', $event)">
         <details v-if="props.item.verses.length" :key="props.item.map.focus" class="map-scripture">
           <summary>读经 · {{ props.item.verses[0].reference }}</summary>
           <p v-for="(verse,i) in props.item.verses" :key="i">{{ verse.verse }}　{{ verse.text }}</p>

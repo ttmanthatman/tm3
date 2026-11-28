@@ -829,17 +829,58 @@ test("XMind 逐点投影与听众会后回放", async ({ browser }) => {
     await expect(stage).toContainText("神爱世人");
     await stage.getByRole("button",{name:"看已讲全图"}).click();
     await expect(workspace.getByRole("button",{name:"归位，看已讲全图"})).toBeEnabled();
+    const projector = workspace.locator(".projector-preview .map-window");
+    for (const preview of [".projector-preview", ".phone-preview"]) {
+      await expect(workspace.locator(preview).locator(".map-stage")).toBeVisible();
+      const bounds = await workspace.locator(preview).evaluate(el => {
+        const frame = el.querySelector(".sermon-preview-frame")!.getBoundingClientRect();
+        const surface = el.querySelector(".map-stage")!.getBoundingClientRect();
+        return { frame: frame.toJSON(), surface: surface.toJSON() };
+      });
+      expect(Math.abs(bounds.frame.height - bounds.surface.height), JSON.stringify(bounds)).toBeLessThan(4);
+      expect(Math.abs(bounds.frame.width - bounds.surface.width), JSON.stringify(bounds)).toBeLessThan(4);
+    }
+    const transform = () => stage.locator(".map-window svg > g").evaluate(el => (el as SVGGElement).style.transform);
+    const beforeMove = await transform();
+    const bounds = await projector.boundingBox();
+    expect(bounds).toBeTruthy();
+    const touch = await admin.context().newCDPSession(admin);
+    const center = { x: bounds!.x + bounds!.width / 2, y: bounds!.y + bounds!.height / 2 };
+    const fingers = (gap: number, offset: number) => [-1, 1].map((side, i) => ({
+      id: i + 1, x: center.x + gap * side + offset, y: center.y
+    }));
+    await touch.send("Input.dispatchTouchEvent", {type:"touchStart", touchPoints:fingers(24,0)});
+    await touch.send("Input.dispatchTouchEvent", {type:"touchMove", touchPoints:fingers(48,12)});
+    await touch.send("Input.dispatchTouchEvent", {type:"touchEnd", touchPoints:[]});
+    await expect.poll(transform).not.toBe(beforeMove);
+    const followed = await transform();
+    await stage.locator(".map-window").hover();
+    await viewer.mouse.wheel(0,160);
+    await expect.poll(transform).not.toBe(followed);
+    await workspace.getByRole("button",{name:"直接投下一点"}).click();
+    await expect(stage.locator(".map-node.current")).toHaveText("留待下一步");
+    const zoom = (matrix: string) => Number(matrix.match(/scale\(([^)]+)\)/)?.[1]);
+    expect(zoom(await transform())).toBeCloseTo(zoom(followed), 3);
+    await workspace.getByRole("button",{name:"只看当前与上一级"}).click();
+    await expect(stage.locator(".map-node")).toHaveCount(2);
     await workspace.getByRole("button",{name:"归位，看已讲全图"}).click();
-    await expect(stage.getByRole("button",{name:"回到当前要点"})).toHaveCount(0);
+    await expect(stage.locator(".map-node")).toHaveCount(3);
+    await workspace.getByRole("button",{name:"倒退一步"}).click();
+    await expect(stage.locator(".map-node")).toHaveCount(2);
+    await workspace.getByRole("button",{name:"倒退一步"}).click();
+    await expect(stage.locator(".map-node")).toHaveCount(3);
+    await workspace.getByRole("button",{name:"倒退一步"}).click();
+    await expect(stage.locator(".map-node.current")).toHaveText("John 3:16 爱");
+    await expect(stage).not.toContainText("留待下一步");
     await workspace.getByRole("button",{name:"结束演示",exact:true}).click();
     await expect(stage).toHaveCount(0);
     await viewer.getByRole("button",{name:"更多功能"}).click();
     await viewer.getByRole("button",{name:"讲道台",exact:true}).click();
     const entry = viewer.getByRole("dialog",{name:"选择讲道台"});
     await entry.getByRole("button",{name:/回放测试/}).first().click();
-    await expect(entry).toContainText("1 / 2");
+    await expect(entry).toContainText(/1 \/ (?:[89]|[1-9]\d+)/);
     await entry.getByRole("button",{name:"下一步"}).click();
-    await expect(entry).toContainText("2 / 2");
+    await expect(entry).toContainText(/2 \/ (?:[89]|[1-9]\d+)/);
     await expect(entry.locator(".map-node")).toHaveCount(2);
   } finally {
     await cleanupPresentations([admin]);

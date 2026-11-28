@@ -1,4 +1,4 @@
-import { sermonMapSchema } from "../../shared/sermonMap.js";
+import { mapCameraSchema, sermonMapSchema } from "../../shared/sermonMap.js";
 import { z } from "zod";
 import type { Socket } from "socket.io";
 import type { SermonAnnotation, SermonEndedEvent, SermonInvitedEvent, SermonPresentationPreviewEvent, SermonRemovedEvent, SermonSlideLayoutDTO, SermonStateDTO } from "../../shared/types.js";
@@ -441,6 +441,15 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
     } catch (error) {
       ackFailure(ack, error);
     }
+  });
+
+  socket.on("sermon:map-camera", async (data: unknown, ack?: SermonAck) => {
+    const owned = await ownedPresentation(ack);
+    if (!owned) return;
+    const parsed = z.object({ id: z.string().min(1).max(64), step: z.string().max(64).optional(), camera: mapCameraSchema }).safeParse(data);
+    if (!parsed.success) { ack?.({ ok: false, message: "导图视角无效" }); return; }
+    const { id, step, camera } = parsed.data;
+    await commit(ack, owned.accountId, () => owned.record.store.moveMap(owned.actor, id, step, camera), undefined, true);
   });
 
   socket.on("sermon:map", async (data: unknown, ack?: SermonAck) => {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { MapCamera, SermonMap } from "@shared/sermonMap";
 import SermonMapDesk from "./SermonMapDesk.vue";
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ArrowDown, ArrowUp, CheckCircle2, ChevronLeft, Eraser, FolderOpen, Highlighter, Pencil, Plus, Save, SkipBack, SkipForward, Trash2, Underline, X } from "lucide-vue-next";
@@ -125,6 +126,7 @@ const presenterUntilText = computed(() => {
 // 演示被结束后回到队列屏，由开始屏接管。
 watch(hasOwnPresentation, (has) => {
   if (!has) {
+    mapHistory.value = [];
     view.value = "queue";
     verseMenu.value = null;
     selectionOffer.value = null;
@@ -277,12 +279,47 @@ function toggleAllInviteCandidates(event: Event) {
   selectedMoreInviteIds.value = checked ? inviteCandidateIds.value.slice() : [];
 }
 
-async function projectPoint(map: import("@shared/sermonMap").SermonMap) {
+const mapHistory = ref<Array<{ id: string | null; map?: SermonMap }>>([]);
+let queuedMove: { id: string; step?: string; camera: MapCamera } | undefined;
+let cameraTimer: ReturnType<typeof setTimeout> | undefined;
+let sendingCamera = false;
+function moveCamera(camera: MapCamera) {
+  const item = currentItem.value;
+  if (!item?.map || !sermonState.value?.active || !props.open) return;
+  queuedMove = { id: item.id, step: item.map.step, camera };
+  scheduleCamera();
+}
+function scheduleCamera() {
+  if (!queuedMove || cameraTimer || sendingCamera) return;
+  cameraTimer = setTimeout(async () => {
+    cameraTimer = undefined;
+    const update = queuedMove;
+    queuedMove = undefined;
+    if (!update || currentItem.value?.id !== update.id || currentItem.value.map?.step !== update.step) return;
+    sendingCamera = true;
+    try { await report(sermon.moveMap(update.id, update.step, update.camera)); }
+    finally { sendingCamera = false; scheduleCamera(); }
+  }, 90);
+}
+onBeforeUnmount(() => { clearTimeout(cameraTimer); queuedMove = undefined; });
+async function projectPoint(map: SermonMap) {
+  const previous = { id: currentItemId.value, map: currentItem.value?.map };
+  queuedMove = undefined;
   const result = await report(sermon.projectMap(map));
   if (result.ok) {
+    mapHistory.value.push(previous);
     selectedItemId.value = currentItemId.value;
     actionError.value = formatErrors(result);
   }
+}
+async function backMap() {
+  const previous = mapHistory.value.at(-1);
+  if (!previous) return;
+  queuedMove = undefined;
+  const result = await report(previous.map
+    ? sermon.projectMap({ ...previous.map, step: crypto.randomUUID() })
+    : sermon.present(previous.id));
+  if (result.ok) mapHistory.value.pop();
 }
 
 async function report(result: Promise<SermonEmitResult>) {
@@ -639,8 +676,11 @@ function annotateSelection() {
           <button :aria-pressed="material === 'map'" @click="material = 'map'">思维导图</button>
           <button :aria-pressed="material === 'text'" @click="material = 'text'">经文与文字</button>
         </nav>
-        <SermonMapDesk :account-id="accountId" v-show="material === 'map'" :live="queue.find(item => item.map)?.map" :busy="sermon.pending.value"
+        <SermonMapDesk :account-id="accountId" v-show="material === 'map'" :live="currentItem?.map" :can-back="mapHistory.length > 0" @back="backMap" :busy="sermon.pending.value"
           @project="projectPoint" @scripture="title => { contentInput = title; material = 'text'; }" />
+        <div v-if="currentItem?.map && material === 'map'" class="sermon-overlay mobile-map-preview">
+          <div class="sermon-overlay-card"><SermonStage :item="currentItem" @camera="moveCamera" /></div>
+        </div>
         <details class="sermon-block">
           <summary>保存讲道方案</summary>
           <div class="sermon-plan-save-row">
@@ -822,7 +862,7 @@ function annotateSelection() {
               <div class="sermon-preview-scale projector" :style="{ transform: `scale(${projectorScale})` }">
                 <div class="sermon-overlay sermon-preview-stage projector" :style="sermonDisplayStyle(display)" v-bind="sermonDisplayAttrs(display)">
                   <div class="sermon-overlay-card">
-                    <SermonStage :item="previewItem" :presenter-name="previewPresenterName" />
+                    <SermonStage :item="previewItem" :presenter-name="previewPresenterName" @camera="camera => previewItem?.id === currentItemId && moveCamera(camera)" />
                   </div>
                 </div>
               </div>
@@ -834,7 +874,7 @@ function annotateSelection() {
               <div class="sermon-preview-scale phone" :style="{ transform: `scale(${phoneScale})` }">
                 <div class="sermon-overlay sermon-preview-stage phone" :style="sermonDisplayStyle(display)" v-bind="sermonDisplayAttrs(display)">
                   <div class="sermon-overlay-card">
-                    <SermonStage :item="previewItem" :presenter-name="previewPresenterName" />
+                    <SermonStage :item="previewItem" :presenter-name="previewPresenterName" @camera="camera => previewItem?.id === currentItemId && moveCamera(camera)" />
                   </div>
                 </div>
               </div>
@@ -914,6 +954,7 @@ function annotateSelection() {
           <SermonStage
             :item="currentItem"
             :presenter-name="sermonState?.presenterName || ''"
+            @camera="moveCamera"
             @verse-click="handleVerseClick"
           />
         </div>

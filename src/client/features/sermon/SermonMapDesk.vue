@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { sermonMapSchema, type SermonMap } from "@shared/sermonMap";
+import { familyNodes, frameNodes, revealCamera } from "./mapCamera";
 import { importXmind, revealPoint } from "./xmind";
-const props = defineProps<{ live?: SermonMap; busy: boolean; accountId: number | null }>();
-const emit = defineEmits<{ project: [map: SermonMap]; scripture: [title: string] }>();
+const props = defineProps<{ live?: SermonMap; busy: boolean; canBack: boolean; accountId: number | null }>();
+const emit = defineEmits<{ project: [map: SermonMap]; scripture: [title: string]; back: [] }>();
 const sheets = ref<SermonMap[]>([]), sheet = ref(0), selected = ref(0), error = ref(""), loading = ref(false);
 const map = computed(() => sheets.value[sheet.value]);
 const frame = computed(() => {
@@ -19,9 +20,8 @@ watch(() => props.accountId, id => {
     if (saved) sheets.value = sermonMapSchema.array().parse(JSON.parse(saved));
   } catch { error.value = "无法恢复本机导图，请重新导入"; }
 }, { immediate: true });
-watch(frame, (next, prior) => {
-  if (next?.overview && !prior?.overview && next.focus === selected.value && selected.value + 1 < map.value.nodes.length) selected.value++;
-});
+const nextPoint = computed(() => frame.value ? map.value?.nodes.find(n => n.id > frame.value!.focus && !frame.value!.nodes.some(shown => shown.id === n.id)) : undefined);
+watch(() => frame.value?.focus, focus => { if (focus !== undefined) selected.value = focus; });
 async function load(event: Event) {
   const input = event.target as HTMLInputElement, file = input.files?.[0];
   if (!file) return;
@@ -39,13 +39,15 @@ async function load(event: Event) {
   catch (e) { error.value = e instanceof Error && !(e.name === "ZodError") ? e.message : "无法读取这份 XMind 导图"; }
   finally { loading.value = false; input.value = ""; }
 }
-function advance() {
-  if (!map.value) return;
-  if (frame.value && !frame.value.overview && selected.value === frame.value.focus) {
-    emit("project", { ...frame.value, overview: true });
-  } else {
-    emit("project", revealPoint(map.value, frame.value?.nodes.map(n => n.id) ?? [], selected.value));
-  }
+function project(id: number) {
+  const next = revealPoint(map.value, frame.value?.nodes.map(n => n.id) ?? [], id);
+  emit("project", { ...next, step: crypto.randomUUID(), camera: revealCamera(frame.value, next) });
+}
+function reframe(family: boolean) {
+  const current = frame.value;
+  if (!current) return;
+  emit("project", { ...current, step: crypto.randomUUID(), family, overview: !family,
+    camera: frameNodes(family ? familyNodes(current) : current.nodes) });
 }
 </script>
 <template>
@@ -56,7 +58,12 @@ function advance() {
     <template v-if="map">
       <select v-if="sheets.length > 1" v-model="sheet" aria-label="画布" @change="selected = 0"><option v-for="(s,i) in sheets" :key="i" :value="i">{{ s.title }}</option></select>
       <label>待讲要点<select v-model="selected"><option v-for="n in map.nodes" :key="n.id" :value="n.id">{{ '　'.repeat(Math.min(n.column,6)) }}{{ n.title }}</option></select></label>
-      <div><button class="primary-btn" :disabled="busy" @click="advance">{{ frame && !frame.overview && frame.focus === selected ? '归位，看已讲全图' : '投出这一点' }}</button>
+      <div>
+        <button v-if="!frame || selected !== frame.focus" class="primary-btn" :disabled="busy" @click="project(selected)">投出这一点</button>
+        <button v-if="frame" class="primary-btn" :disabled="busy || !nextPoint" @click="nextPoint && project(nextPoint.id)">直接投下一点</button>
+        <button v-if="frame" class="mini-btn secondary" :disabled="busy" @click="reframe(false)">归位，看已讲全图</button>
+        <button v-if="frame" class="mini-btn secondary" :disabled="busy" @click="reframe(true)">只看当前与上一级</button>
+        <button class="mini-btn secondary" :disabled="busy || !canBack" @click="emit('back')">倒退一步</button>
         <button class="mini-btn secondary" @click="emit('scripture', pick.title)">带入经文与文字</button></div>
     </template>
   </section>

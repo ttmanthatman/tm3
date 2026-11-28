@@ -1,5 +1,14 @@
 import { z } from "zod";
 
+export const mapCameraSchema = z.object({
+  origin: z.string().max(64).optional(),
+  x: z.number().finite().min(-250000).max(250000),
+  y: z.number().finite().min(-250000).max(250000),
+  width: z.number().finite().min(1).max(500000),
+  height: z.number().finite().min(1).max(500000)
+});
+export type MapCamera = z.infer<typeof mapCameraSchema>;
+
 export const sermonMapSchema = z.object({
   title: z.string().trim().min(1).max(300),
   nodes: z.array(z.object({
@@ -17,6 +26,9 @@ export const sermonMapSchema = z.object({
     label: z.string().max(300)
   })).max(300),
   focus: z.number().int().nonnegative(),
+  camera: mapCameraSchema.optional(),
+  step: z.string().max(64).optional(),
+  family: z.boolean().optional(),
   overview: z.boolean()
 }).refine(map => {
   const ids = new Set(map.nodes.map(n => n.id));
